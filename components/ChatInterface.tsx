@@ -3,6 +3,7 @@ import { Message, Sender } from '../types';
 import { biomeService } from '../services/biomeService';
 import { getRawDatabase, resetDatabase } from '../services/toolImpl';
 import ReactMarkdown from 'react-markdown';
+import { AnalyticsDashboard } from './AnalyticsDashboard';
 
 const CHAT_STORAGE_KEY = 'biome_chat_history_v2';
 
@@ -11,6 +12,7 @@ export const ChatInterface: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [dbView, setDbView] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -123,11 +125,14 @@ export const ChatInterface: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-4xl mx-auto bg-biome-panel border-x border-biome-panel shadow-2xl relative">
+    <div className="flex flex-col h-full max-w-4xl mx-auto bg-biome-panel border-x border-biome-panel shadow-2xl relative overflow-hidden">
       
+      {/* Analytics Dashboard Overlay */}
+      {showAnalytics && <AnalyticsDashboard onClose={() => setShowAnalytics(false)} />}
+
       {/* Settings Modal */}
       {showSettings && (
-        <div className="absolute top-14 right-4 z-50 w-72 bg-biome-panel border border-gray-700 shadow-xl rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
+        <div className="absolute top-14 right-4 z-40 w-72 bg-biome-panel border border-gray-700 shadow-xl rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
             <h3 className="text-white font-bold mb-3 text-sm font-mono border-b border-gray-800 pb-2">DATA MANAGEMENT</h3>
             <div className="space-y-2">
                 <button onClick={handleViewDb} className="w-full text-left text-xs text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
@@ -176,8 +181,15 @@ export const ChatInterface: React.FC = () => {
             </div>
         </div>
         <div className="flex gap-2">
-            <button onClick={fillDemo} className="text-xs text-biome-dim hover:text-biome-accent font-mono border border-gray-800 px-2 py-1 rounded transition-colors">
+            <button onClick={fillDemo} className="hidden sm:block text-xs text-biome-dim hover:text-biome-accent font-mono border border-gray-800 px-2 py-1 rounded transition-colors">
                 Load Demo Prompt
+            </button>
+            <button onClick={() => setShowAnalytics(true)} className="text-xs font-mono bg-gray-900 border border-gray-700 text-biome-accent hover:bg-gray-800 px-3 py-1 rounded transition-colors flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path fillRule="evenodd" d="M2.25 13.5a8.25 8.25 0 018.25-8.25.75.75 0 01.75.75v6.75H18a.75.75 0 01.75.75 8.25 8.25 0 01-16.5 0z" clipRule="evenodd" />
+                  <path fillRule="evenodd" d="M12.75 3a.75.75 0 01.75-.75 8.25 8.25 0 018.25 8.25.75.75 0 01-.75.75h-7.5a.75.75 0 01-.75-.75V3z" clipRule="evenodd" />
+                </svg>
+                Visualize
             </button>
             <button onClick={toggleSettings} className={`text-xs font-mono border border-gray-800 px-2 py-1 rounded transition-colors flex items-center gap-1 ${showSettings ? 'bg-gray-800 text-white' : 'text-biome-dim hover:text-white'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
