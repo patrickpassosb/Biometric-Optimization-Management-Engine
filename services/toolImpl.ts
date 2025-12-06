@@ -25,6 +25,8 @@ const getDatabase = (): Record<string, WorkoutLog[]> => {
  */
 const saveDatabase = (db: Record<string, WorkoutLog[]>) => {
   localStorage.setItem(DB_KEY, JSON.stringify(db));
+  // Dispatch a custom event so UI components can react to data changes
+  window.dispatchEvent(new Event('biome-db-updated'));
 };
 
 /**
@@ -40,6 +42,7 @@ export const getRawDatabase = (): Record<string, WorkoutLog[]> => {
 export const resetDatabase = (): void => {
   localStorage.removeItem(DB_KEY);
   localStorage.setItem(DB_KEY, JSON.stringify(MOCK_DATABASE));
+  window.dispatchEvent(new Event('biome-db-updated'));
 };
 
 /**
@@ -83,7 +86,8 @@ export const logWorkoutImpl = (args: any): string => {
   );
 
   if (!key) {
-    key = exercise_name; // Use provided name if new
+    // If not found, use the name as provided, but try to Title Case it nicely if simple
+    key = exercise_name.charAt(0).toUpperCase() + exercise_name.slice(1);
     db[key] = [];
   }
 

@@ -1,11 +1,34 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, Sender } from '../types';
 import { biomeService } from '../services/biomeService';
-import { getRawDatabase, resetDatabase } from '../services/toolImpl';
-import ReactMarkdown from 'react-markdown';
+import { getRawDatabase, resetDatabase, logWorkoutImpl } from '../services/toolImpl';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 
 const CHAT_STORAGE_KEY = 'biome_chat_history_v2';
+
+const generateId = () => {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2);
+};
+
+// Simple Markdown Parser to avoid external dependencies
+const SimpleMarkdown: React.FC<{ text: string }> = ({ text }) => {
+    // Split by bold markers (**text**)
+    const parts = text.split(/(\*\*.*?\*\*)/g);
+    return (
+        <div className="whitespace-pre-wrap">
+            {parts.map((part, index) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                    return (
+                        <strong key={index} className="text-biome-accent font-bold">
+                            {part.slice(2, -2)}
+                        </strong>
+                    );
+                }
+                return <span key={index}>{part}</span>;
+            })}
+        </div>
+    );
+};
 
 export const ChatInterface: React.FC = () => {
   const [input, setInput] = useState('');
@@ -14,9 +37,10 @@ export const ChatInterface: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [dbView, setDbView] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize from Local Storage on Mount
   useEffect(() => {
     const storedChat = localStorage.getItem(CHAT_STORAGE_KEY);
     let initialMessages: Message[] = [];
@@ -39,13 +63,11 @@ export const ChatInterface: React.FC = () => {
 
     setMessages(initialMessages);
     
-    // Resume Biome Service context if we have history
     if (initialMessages.length > 0) {
       biomeService.startNewSession(initialMessages);
     }
   }, []);
 
-  // Persist Messages on Change
   useEffect(() => {
     if (messages.length > 0) {
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
@@ -63,17 +85,15 @@ export const ChatInterface: React.FC = () => {
     setInput('');
     setIsProcessing(true);
 
-    // Add user message
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       sender: Sender.USER,
       text: userText
     };
     setMessages(prev => [...prev, userMsg]);
 
-    // Call Service
     const responseMessages = await biomeService.sendMessage(userText, (toolName, args) => {
-      // Optional: Add a temporary loading state or specific tool indicator if needed
+      // Optional: Tool callback logic
     });
 
     setMessages(prev => [...prev, ...responseMessages]);
@@ -94,12 +114,13 @@ export const ChatInterface: React.FC = () => {
   const toggleSettings = () => {
     setShowSettings(!showSettings);
     setDbView(null);
+    setImportError(null);
   };
 
   const handleClearHistory = () => {
     localStorage.removeItem(CHAT_STORAGE_KEY);
     setMessages([{
-      id: crypto.randomUUID(),
+      id: generateId(),
       sender: Sender.BIOME,
       text: "**System Rebooted.** Memory cleared."
     }]);
@@ -124,39 +145,120 @@ export const ChatInterface: React.FC = () => {
     }
   };
 
+  const triggerFileUpload = () => {
+    if (fileInputRef.current) {
+        fileInputRef.current.click();
+    }
+  };
+
+  const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        try {
+            const csvData = event.target?.result as string;
+            if (!csvData) return;
+
+            const lines = csvData.split('\n');
+            let successCount = 0;
+            let failCount = 0;
+
+            // Simple CSV parser: assume header row, assume columns: Date, Exercise, Weight, Reps, RPE, Notes
+            // Or simpler: Exercise, Weight, Reps, RPE, Date
+            
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                const parts = line.split(',');
+                // Expect at least 4 parts
+                if (parts.length < 4) {
+                    failCount++;
+                    continue;
+                }
+
+                // Try to map commonly expected formats. 
+                // Format A: Exercise, Weight, Reps, RPE, Date, Notes
+                const exercise_name = parts[0]?.trim();
+                const weight = parseFloat(parts[1]);
+                const reps = parseFloat(parts[2]);
+                const rpe = parseFloat(parts[3]);
+                let date = parts[4]?.trim();
+                let notes = parts[5]?.trim() || "Imported via CSV";
+
+                // Basic validation
+                if (!exercise_name || isNaN(weight) || isNaN(reps)) {
+                    failCount++;
+                    continue;
+                }
+
+                if (!date || date.length < 5) {
+                    date = new Date().toISOString().split('T')[0];
+                }
+
+                logWorkoutImpl({
+                    exercise_name,
+                    weight,
+                    reps,
+                    rpe: isNaN(rpe) ? 8 : rpe,
+                    date,
+                    notes
+                });
+                successCount++;
+            }
+            
+            alert(`Import Complete!\nSuccessful: ${successCount}\nFailed: ${failCount}\n\nPlease refresh visualization.`);
+            setShowSettings(false);
+
+        } catch (err) {
+            setImportError("Failed to parse CSV. Ensure format: Exercise, Weight, Reps, RPE, Date, Notes");
+        }
+    };
+    reader.readAsText(file);
+    // Reset input
+    e.target.value = '';
+  };
+
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto bg-biome-panel border-x border-biome-panel shadow-2xl relative overflow-hidden">
       
-      {/* Analytics Dashboard Overlay */}
       {showAnalytics && <AnalyticsDashboard onClose={() => setShowAnalytics(false)} />}
 
-      {/* Settings Modal */}
       {showSettings && (
-        <div className="absolute top-14 right-4 z-40 w-72 bg-biome-panel border border-gray-700 shadow-xl rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
+        <div className="absolute top-14 right-4 z-40 w-72 bg-biome-panel border border-gray-700 shadow-xl rounded-lg p-4">
             <h3 className="text-white font-bold mb-3 text-sm font-mono border-b border-gray-800 pb-2">DATA MANAGEMENT</h3>
             <div className="space-y-2">
                 <button onClick={handleViewDb} className="w-full text-left text-xs text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-biome-accent">
-                        <path fillRule="evenodd" d="M1 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-1 1H2a1 1 0 01-1-1V4zm12 4a3 3 0 11-6 0 3 3 0 016 0zM4 9a1 1 0 100-2 1 1 0 000 2zm13-1a1 1 0 11-2 0 1 1 0 012 0zM1.75 14.5a.75.75 0 000 1.5c4.417 0 8.693.603 12.749 1.73 1.111.309 2.251-.512 2.251-1.696v-.784a.75.75 0 00-1.5 0v.784a6.658 6.658 0 01-1.658.905A36.727 36.727 0 011.75 14.5z" clipRule="evenodd" />
-                    </svg>
                     {dbView ? 'Hide Database' : 'Inspect Database'}
                 </button>
+                <button onClick={triggerFileUpload} className="w-full text-left text-xs text-biome-accent hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
+                    Import CSV Data
+                    <span className="text-[9px] text-gray-500 ml-auto">(Ex, W, R, RPE, Date)</span>
+                </button>
+                <input 
+                    type="file" 
+                    accept=".csv" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    onChange={handleCsvImport}
+                />
                 <button onClick={handleClearHistory} className="w-full text-left text-xs text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
-                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-yellow-500">
-                        <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                    </svg>
                     Clear Chat History
                 </button>
                 <button onClick={handleFactoryReset} className="w-full text-left text-xs text-red-400 hover:text-red-300 hover:bg-red-950/30 p-2 rounded transition-colors flex items-center gap-2 border border-transparent hover:border-red-900">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                        <path fillRule="evenodd" d="M13.5 4.938a7 7 0 11-9.006 1.737c.2-.255.603-.215.832.04a7 7 0 0111 0c.23.255.632.294.832.04a7 7 0 00-3.658-1.817zM10 16a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-                    </svg>
                     Factory Reset (Wipe All)
                 </button>
             </div>
+            {importError && (
+                <div className="mt-2 text-[10px] text-red-400 p-2 bg-red-900/20 rounded">
+                    {importError}
+                </div>
+            )}
             {dbView && (
                 <div className="mt-3 bg-black/50 p-2 rounded border border-gray-800">
-                    <pre className="text-[10px] text-green-400 overflow-x-auto max-h-60 scrollbar-thin">
+                    <pre className="text-[10px] text-green-400 overflow-x-auto max-h-60">
                         {dbView}
                     </pre>
                 </div>
@@ -164,7 +266,6 @@ export const ChatInterface: React.FC = () => {
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-biome-dark/90 backdrop-blur sticky top-0 z-10">
         <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-biome-accent flex items-center justify-center">
@@ -185,22 +286,14 @@ export const ChatInterface: React.FC = () => {
                 Load Demo Prompt
             </button>
             <button onClick={() => setShowAnalytics(true)} className="text-xs font-mono bg-gray-900 border border-gray-700 text-biome-accent hover:bg-gray-800 px-3 py-1 rounded transition-colors flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                  <path fillRule="evenodd" d="M2.25 13.5a8.25 8.25 0 018.25-8.25.75.75 0 01.75.75v6.75H18a.75.75 0 01.75.75 8.25 8.25 0 01-16.5 0z" clipRule="evenodd" />
-                  <path fillRule="evenodd" d="M12.75 3a.75.75 0 01.75-.75 8.25 8.25 0 018.25 8.25.75.75 0 01-.75.75h-7.5a.75.75 0 01-.75-.75V3z" clipRule="evenodd" />
-                </svg>
                 Visualize
             </button>
             <button onClick={toggleSettings} className={`text-xs font-mono border border-gray-800 px-2 py-1 rounded transition-colors flex items-center gap-1 ${showSettings ? 'bg-gray-800 text-white' : 'text-biome-dim hover:text-white'}`}>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path fillRule="evenodd" d="M3 4.25A2.25 2.25 0 015.25 2h9.5A2.25 2.25 0 0117 4.25v11.5A2.25 2.25 0 0114.75 18h-9.5A2.25 2.25 0 013 15.75V4.25zM6 13a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm0-4a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm0-4a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1z" clipRule="evenodd" />
-                </svg>
                 Database
             </button>
         </div>
       </div>
 
-      {/* Message List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth" ref={scrollRef}>
         {messages.map((msg) => (
           <div 
@@ -209,21 +302,18 @@ export const ChatInterface: React.FC = () => {
           >
             <div className={`max-w-[85%] ${msg.sender === Sender.SYSTEM ? 'w-full' : ''}`}>
               
-              {/* Message Header */}
               <div className={`text-xs font-mono mb-1 flex items-center gap-2 ${msg.sender === Sender.USER ? 'justify-end text-biome-dim' : 'text-biome-accent'}`}>
-                {msg.sender === Sender.BIOME && <span>⧖ BIOME.AI</span>}
+                {msg.sender === Sender.BIOME && <span>&gt; BIOME.AI</span>}
                 {msg.sender === Sender.USER && <span>USER</span>}
-                {msg.sender === Sender.SYSTEM && <span className="text-yellow-500">⚡ SYSTEM_TOOL</span>}
+                {msg.sender === Sender.SYSTEM && <span className="text-yellow-500"># SYSTEM_TOOL</span>}
               </div>
 
-              {/* Message Bubble */}
               {msg.sender === Sender.SYSTEM ? (
                  <div className="bg-gray-900/50 border border-gray-800 rounded p-3 text-xs font-mono text-gray-400">
                     <div className="flex items-center justify-between mb-1">
                         <span className="font-bold text-yellow-500/80">Executing: {msg.toolCall?.name}</span>
                         <span className="text-[10px] opacity-50">{msg.id.slice(0,4)}</span>
                     </div>
-                    {/* Only show args if technical, otherwise keep clean */}
                     <div className="opacity-70 truncate">Input: {JSON.stringify(msg.toolCall?.args)}</div>
                  </div>
               ) : (
@@ -234,16 +324,7 @@ export const ChatInterface: React.FC = () => {
                         : 'bg-biome-dark border border-gray-800 text-gray-200 rounded-bl-none'
                     }`}
                 >
-                    <ReactMarkdown 
-                        components={{
-                            strong: ({node, ...props}) => <span className="font-bold text-biome-accent" {...props} />,
-                            p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
-                            ul: ({node, ...props}) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
-                            li: ({node, ...props}) => <li className="pl-1" {...props} />
-                        }}
-                    >
-                        {msg.text}
-                    </ReactMarkdown>
+                    <SimpleMarkdown text={msg.text} />
                 </div>
               )}
             </div>
@@ -260,7 +341,6 @@ export const ChatInterface: React.FC = () => {
         )}
       </div>
 
-      {/* Input Area */}
       <div className="p-4 bg-biome-dark border-t border-gray-800">
         <div className="relative">
             <textarea
@@ -281,7 +361,7 @@ export const ChatInterface: React.FC = () => {
             </button>
         </div>
         <div className="mt-2 flex justify-center">
-            <span className="text-[10px] text-biome-dim font-mono">POWERED BY GEMINI 2.5 PRO • BIOME METRICS ENGINE</span>
+            <span className="text-[10px] text-biome-dim font-mono">POWERED BY GEMINI 2.5 PRO | BIOME METRICS ENGINE</span>
         </div>
       </div>
     </div>

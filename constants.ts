@@ -1,7 +1,7 @@
-import { FunctionDeclaration, Schema, Type } from "@google/genai";
+import { FunctionDeclaration, Type } from "@google/genai";
 import { WorkoutLog } from "./types";
 
-export const MODEL_NAME = "gemini-3-pro-preview"; // Using most capable model
+export const MODEL_NAME = "gemini-3-pro-preview";
 
 export const SYSTEM_INSTRUCTION = `You are **Biome: The AI Performance Coach**, an elite, data-driven strength and conditioning specialist. Your sole purpose is to maximize the user's progress through **Progressive Overload** while prioritizing safety, optimal technique, and longevity. You use biomimicry principles to guide training.
 
@@ -13,7 +13,7 @@ export const SYSTEM_INSTRUCTION = `You are **Biome: The AI Performance Coach**, 
 
 **CONSTRAINTS & RULES:**
 * **Tool-First Rule:** You **MUST** use the provided tools ('get_history' and 'calculate_metrics') to retrieve and analyze data before forming an opinion or giving a recommendation. Do not guess.
-* **Logging Rule:** If the user explicitly states they completed a set or session (e.g., "I just did 5 reps at 100kg"), you **MUST** use the 'log_workout' tool to save this data to the database. Confirm the save to the user.
+* **Visualization Guarantee (CRITICAL):** The user CANNOT see data in the analytics charts unless it is saved to the database. If the user provides training logs in the chat (whether it's a new session OR a past history they are pasting for you to analyze), you **MUST** use the 'log_workout' tool to save EVERY entry to the database immediately. Do this *before* you provide your analysis. If the user says "I did X on these dates", log ALL of them.
 * **Data Normalization:** The user's input will be messy and multilingual (Portuguese/English). You must internally resolve the exercise name to a standard English name (e.g., 'Agachamento' -> 'Squat'). The standardized name must be used when calling tools.
 * **RPE Interpretation (Rate of Perceived Exertion):**
     * **RPE 6-7:** Too easy. Recommend increasing volume (reps/sets) or weight to reach RPE 8.
@@ -36,6 +36,19 @@ export const MOCK_DATABASE: Record<string, WorkoutLog[]> = {
   "Squat": [
     { date: "2025-11-01", weight: 100, reps: 5, rpe: 8, notes: "Solid." },
     { date: "2025-11-20", weight: 105, reps: 5, rpe: 9, notes: "Hard." }
+  ],
+  "Bench Press": [
+    { date: "2025-09-10", weight: 80, reps: 8, rpe: 7, notes: "Easy start." },
+    { date: "2025-09-25", weight: 85, reps: 8, rpe: 8, notes: "Good tempo." },
+    { date: "2025-10-10", weight: 90, reps: 6, rpe: 8.5, notes: "Heavy but solid." },
+    { date: "2025-10-24", weight: 92.5, reps: 5, rpe: 9, notes: "Struggle on lock out." },
+    { date: "2025-11-15", weight: 95, reps: 4, rpe: 9.5, notes: "Near failure." },
+    { date: "2025-12-01", weight: 95, reps: 5, rpe: 10, notes: "Absolute max effort." }
+  ],
+  "Dead Hang": [
+    { date: "2025-11-01", weight: 0, reps: 60, rpe: 7, notes: "Bodyweight, 60s" },
+    { date: "2025-11-08", weight: 5, reps: 45, rpe: 8, notes: "+5kg, 45s" },
+    { date: "2025-11-15", weight: 10, reps: 30, rpe: 9, notes: "+10kg, 30s" }
   ]
 };
 
@@ -73,7 +86,7 @@ export const calculateMetricsTool: FunctionDeclaration = {
 
 export const logWorkoutTool: FunctionDeclaration = {
   name: "log_workout",
-  description: "Saves a new workout entry to the database. Use this when the user reports a completed set or session.",
+  description: "Saves a new workout entry to the database. REQUIRED if the user provides data (past or present) so it can be visualized.",
   parameters: {
     type: Type.OBJECT,
     properties: {
