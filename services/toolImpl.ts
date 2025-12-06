@@ -1,16 +1,59 @@
 import { MOCK_DATABASE } from "../constants";
 import { WorkoutLog, ExerciseMetrics } from "../types";
 
+const DB_KEY = 'biome_db_v1';
+
+/**
+ * Helper to get the DB from LocalStorage or initialize it with MOCK_DATABASE
+ */
+const getDatabase = (): Record<string, WorkoutLog[]> => {
+  const stored = localStorage.getItem(DB_KEY);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {
+      console.error("Failed to parse DB from local storage, resetting.");
+    }
+  }
+  // Initialize with seed data
+  localStorage.setItem(DB_KEY, JSON.stringify(MOCK_DATABASE));
+  return MOCK_DATABASE;
+};
+
+/**
+ * Helper to save DB to LocalStorage
+ */
+const saveDatabase = (db: Record<string, WorkoutLog[]>) => {
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+};
+
+/**
+ * Returns the raw database object for inspection.
+ */
+export const getRawDatabase = (): Record<string, WorkoutLog[]> => {
+  return getDatabase();
+};
+
+/**
+ * Resets the database to the initial seed data.
+ */
+export const resetDatabase = (): void => {
+  localStorage.removeItem(DB_KEY);
+  localStorage.setItem(DB_KEY, JSON.stringify(MOCK_DATABASE));
+};
+
 /**
  * Simulates fetching data from a database.
  */
 export const getHistoryImpl = (exercise_name: string): string => {
   if (!exercise_name) return JSON.stringify([]);
   
-  // Normalize casing and remove spaces for loose matching to handle 'BulgarianSquat' vs 'Bulgarian Squat'
+  const db = getDatabase();
+  
+  // Normalize casing and remove spaces for loose matching
   const target = exercise_name.toLowerCase().replace(/\s+/g, '');
 
-  const normalizedKey = Object.keys(MOCK_DATABASE).find(
+  const normalizedKey = Object.keys(db).find(
     (k) => k.toLowerCase().replace(/\s+/g, '') === target
   );
 
@@ -18,8 +61,44 @@ export const getHistoryImpl = (exercise_name: string): string => {
     return JSON.stringify([]);
   }
 
-  const logs = MOCK_DATABASE[normalizedKey];
+  const logs = db[normalizedKey];
   return JSON.stringify(logs);
+};
+
+/**
+ * Logs a new workout to the database.
+ */
+export const logWorkoutImpl = (args: any): string => {
+  const { exercise_name, weight, reps, rpe, notes, date } = args;
+  
+  if (!exercise_name || weight === undefined || reps === undefined || rpe === undefined) {
+    return JSON.stringify({ error: "Missing required fields for logging." });
+  }
+
+  const db = getDatabase();
+  
+  // Find existing key or create new one (Title Case preferred for new keys)
+  let key = Object.keys(db).find(
+    (k) => k.toLowerCase().replace(/\s+/g, '') === exercise_name.toLowerCase().replace(/\s+/g, '')
+  );
+
+  if (!key) {
+    key = exercise_name; // Use provided name if new
+    db[key] = [];
+  }
+
+  const newLog: WorkoutLog = {
+    date: date || new Date().toISOString().split('T')[0],
+    weight: Number(weight),
+    reps: Number(reps),
+    rpe: Number(rpe),
+    notes: notes || "Logged via Biome AI"
+  };
+
+  db[key].push(newLog);
+  saveDatabase(db);
+
+  return JSON.stringify({ status: "success", message: `Logged ${key}: ${weight}kg x ${reps} @ RPE ${rpe}` });
 };
 
 /**
@@ -48,7 +127,6 @@ export const calculateMetricsImpl = (history_data_json: string): string => {
   const lastSession = logs[logs.length - 1];
   
   // Calculate Volume (Weight * Reps * Sets (assume 3 sets for simplicity if not tracked per set in this simple model))
-  // For the demo, we just do weight * reps
   const recentVolume = logs.slice(-4).reduce((acc, log) => acc + (log.weight * log.reps), 0);
   const previousVolume = logs.slice(0, Math.max(0, logs.length - 4)).reduce((acc, log) => acc + (log.weight * log.reps), 0);
   

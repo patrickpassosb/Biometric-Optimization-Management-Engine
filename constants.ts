@@ -9,9 +9,11 @@ export const SYSTEM_INSTRUCTION = `You are **Biome: The AI Performance Coach**, 
 1.  **Analyze** the user's historical training data (Weight, Reps, RPE, Notes) for a specific exercise.
 2.  **Diagnose** the current training trend (e.g., Progressing, Plateauing, Over-fatigued, Form Breakdown).
 3.  **Generate** a highly personalized, actionable workout prescription for the user's next session.
+4.  **Log** new data when the user reports a completed set or session.
 
 **CONSTRAINTS & RULES:**
 * **Tool-First Rule:** You **MUST** use the provided tools ('get_history' and 'calculate_metrics') to retrieve and analyze data before forming an opinion or giving a recommendation. Do not guess.
+* **Logging Rule:** If the user explicitly states they completed a set or session (e.g., "I just did 5 reps at 100kg"), you **MUST** use the 'log_workout' tool to save this data to the database. Confirm the save to the user.
 * **Data Normalization:** The user's input will be messy and multilingual (Portuguese/English). You must internally resolve the exercise name to a standard English name (e.g., 'Agachamento' -> 'Squat'). The standardized name must be used when calling tools.
 * **RPE Interpretation (Rate of Perceived Exertion):**
     * **RPE 6-7:** Too easy. Recommend increasing volume (reps/sets) or weight to reach RPE 8.
@@ -21,7 +23,7 @@ export const SYSTEM_INSTRUCTION = `You are **Biome: The AI Performance Coach**, 
 
 **STYLE:** Professional, analytical, authoritative, and focused on biomechanical efficiency.`;
 
-// --- Mock Database ---
+// --- Mock Database (Initial Seed) ---
 
 export const MOCK_DATABASE: Record<string, WorkoutLog[]> = {
   "Bulgarian Squat": [
@@ -66,5 +68,40 @@ export const calculateMetricsTool: FunctionDeclaration = {
       },
     },
     required: ["history_data"],
+  },
+};
+
+export const logWorkoutTool: FunctionDeclaration = {
+  name: "log_workout",
+  description: "Saves a new workout entry to the database. Use this when the user reports a completed set or session.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      exercise_name: {
+        type: Type.STRING,
+        description: "The standardized English name of the exercise.",
+      },
+      weight: {
+        type: Type.NUMBER,
+        description: "Weight lifted in kg.",
+      },
+      reps: {
+        type: Type.NUMBER,
+        description: "Number of repetitions performed.",
+      },
+      rpe: {
+        type: Type.NUMBER,
+        description: "Rate of Perceived Exertion (1-10).",
+      },
+      notes: {
+        type: Type.STRING,
+        description: "Qualitative notes about form, feeling, or pain.",
+      },
+      date: {
+        type: Type.STRING,
+        description: "Date of the workout in YYYY-MM-DD format. Defaults to today if not specified.",
+      }
+    },
+    required: ["exercise_name", "weight", "reps", "rpe"],
   },
 };

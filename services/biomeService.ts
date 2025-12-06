@@ -1,6 +1,6 @@
 import { GoogleGenAI, Content, Part } from "@google/genai";
-import { MODEL_NAME, SYSTEM_INSTRUCTION, getHistoryTool, calculateMetricsTool } from "../constants";
-import { getHistoryImpl, calculateMetricsImpl } from "./toolImpl";
+import { MODEL_NAME, SYSTEM_INSTRUCTION, getHistoryTool, calculateMetricsTool, logWorkoutTool } from "../constants";
+import { getHistoryImpl, calculateMetricsImpl, logWorkoutImpl } from "./toolImpl";
 import { Message, Sender } from "../types";
 
 // Initialize the API client
@@ -11,19 +11,29 @@ export class BiomeService {
   private chatSession: any;
 
   constructor() {
-    this.startNewSession();
+    this.startNewSession([]);
   }
 
-  public startNewSession() {
+  public startNewSession(previousHistory: Message[] = []) {
+    // Map UI messages to GenAI Content format to restore context
+    // We only restore USER and BIOME messages (text) to avoid complex tool state reconstruction
+    const history: Content[] = previousHistory
+      .filter(m => m.sender === Sender.USER || m.sender === Sender.BIOME)
+      .map(m => ({
+        role: m.sender === Sender.USER ? 'user' : 'model',
+        parts: [{ text: m.text }] as Part[]
+      }));
+
     this.chatSession = ai.chats.create({
       model: MODEL_NAME,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.2, // Low temp for analytical precision
         tools: [
-          { functionDeclarations: [getHistoryTool, calculateMetricsTool] }
+          { functionDeclarations: [getHistoryTool, calculateMetricsTool, logWorkoutTool] }
         ],
       },
+      history: history
     });
   }
 
@@ -69,6 +79,8 @@ export class BiomeService {
             resultString = getHistoryImpl(args.exercise_name);
           } else if (name === "calculate_metrics") {
             resultString = calculateMetricsImpl(args.history_data);
+          } else if (name === "log_workout") {
+            resultString = logWorkoutImpl(args);
           } else {
             resultString = JSON.stringify({ error: "Unknown tool" });
           }
