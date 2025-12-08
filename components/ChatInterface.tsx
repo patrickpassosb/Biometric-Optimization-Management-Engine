@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, Sender } from '../types';
 import { biomeService } from '../services/biomeService';
-import { getRawDatabase, resetDatabase, logWorkoutImpl } from '../services/toolImpl';
+import { getRawDatabase, resetDatabase, logWorkoutImpl, restoreDatabase } from '../services/toolImpl';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 
 const CHAT_STORAGE_KEY = 'biome_chat_history_v2';
@@ -36,10 +36,22 @@ export const ChatInterface: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showManualEntry, setShowManualEntry] = useState(false);
   const [dbView, setDbView] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
+
+  // Manual Entry State
+  const [entryForm, setEntryForm] = useState({
+      exercise: '',
+      date: new Date().toISOString().split('T')[0],
+      weight: '',
+      reps: '',
+      rpe: '8',
+      notes: ''
+  });
 
   useEffect(() => {
     const storedChat = localStorage.getItem(CHAT_STORAGE_KEY);
@@ -145,10 +157,51 @@ export const ChatInterface: React.FC = () => {
     }
   };
 
+  const handleExportDb = () => {
+    const db = getRawDatabase();
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "biome_db_backup.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
   const triggerFileUpload = () => {
     if (fileInputRef.current) {
         fileInputRef.current.click();
     }
+  };
+
+  const triggerJsonUpload = () => {
+    if (jsonInputRef.current) {
+        jsonInputRef.current.click();
+    }
+  };
+
+  const handleJsonImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        try {
+            const jsonStr = event.target?.result as string;
+            const parsed = JSON.parse(jsonStr);
+            if (typeof parsed !== 'object') throw new Error("Invalid format");
+            
+            if (window.confirm("This will overwrite your current database. Continue?")) {
+                restoreDatabase(parsed);
+                alert("Database restored successfully!");
+                setShowSettings(false);
+            }
+        } catch (err) {
+            setImportError("Invalid JSON file.");
+        }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,8 +232,6 @@ export const ChatInterface: React.FC = () => {
                     continue;
                 }
 
-                // Try to map commonly expected formats. 
-                // Format A: Exercise, Weight, Reps, RPE, Date, Notes
                 const exercise_name = parts[0]?.trim();
                 const weight = parseFloat(parts[1]);
                 const reps = parseFloat(parts[2]);
@@ -188,7 +239,6 @@ export const ChatInterface: React.FC = () => {
                 let date = parts[4]?.trim();
                 let notes = parts[5]?.trim() || "Imported via CSV";
 
-                // Basic validation
                 if (!exercise_name || isNaN(weight) || isNaN(reps)) {
                     failCount++;
                     continue;
@@ -209,7 +259,7 @@ export const ChatInterface: React.FC = () => {
                 successCount++;
             }
             
-            alert(`Import Complete!\nSuccessful: ${successCount}\nFailed: ${failCount}\n\nPlease refresh visualization.`);
+            alert(`Import Complete!\nSuccessful: ${successCount}\nFailed: ${failCount}`);
             setShowSettings(false);
 
         } catch (err) {
@@ -217,33 +267,149 @@ export const ChatInterface: React.FC = () => {
         }
     };
     reader.readAsText(file);
-    // Reset input
     e.target.value = '';
+  };
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!entryForm.exercise || !entryForm.weight || !entryForm.reps) return;
+      
+      logWorkoutImpl({
+          exercise_name: entryForm.exercise,
+          weight: parseFloat(entryForm.weight),
+          reps: parseFloat(entryForm.reps),
+          rpe: parseFloat(entryForm.rpe),
+          date: entryForm.date,
+          notes: entryForm.notes
+      });
+      
+      setEntryForm({
+          exercise: '',
+          date: new Date().toISOString().split('T')[0],
+          weight: '',
+          reps: '',
+          rpe: '8',
+          notes: ''
+      });
+      alert("Entry Saved!");
+      // Don't close immediately so user can enter more
   };
 
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto bg-biome-panel border-x border-biome-panel shadow-2xl relative overflow-hidden">
       
       {showAnalytics && <AnalyticsDashboard onClose={() => setShowAnalytics(false)} />}
+      
+      {showManualEntry && (
+          <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
+              <div className="bg-biome-panel border border-gray-700 w-full max-w-md rounded-lg shadow-2xl p-6">
+                  <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-bold font-mono text-white">MANUAL LOG ENTRY</h2>
+                      <button onClick={() => setShowManualEntry(false)} className="text-gray-400 hover:text-white">✕</button>
+                  </div>
+                  <form onSubmit={handleManualSubmit} className="space-y-4">
+                      <div>
+                          <label className="block text-xs font-mono text-gray-500 mb-1">Exercise Name</label>
+                          <input 
+                              type="text" 
+                              required
+                              className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
+                              placeholder="e.g. Bench Press"
+                              value={entryForm.exercise}
+                              onChange={e => setEntryForm({...entryForm, exercise: e.target.value})}
+                          />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-mono text-gray-500 mb-1">Date</label>
+                            <input 
+                                type="date" 
+                                required
+                                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
+                                value={entryForm.date}
+                                onChange={e => setEntryForm({...entryForm, date: e.target.value})}
+                            />
+                          </div>
+                          <div>
+                             <label className="block text-xs font-mono text-gray-500 mb-1">RPE (1-10)</label>
+                             <input 
+                                type="number" step="0.5" max="10"
+                                required
+                                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
+                                value={entryForm.rpe}
+                                onChange={e => setEntryForm({...entryForm, rpe: e.target.value})}
+                             />
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-mono text-gray-500 mb-1">Weight (kg)</label>
+                            <input 
+                                type="number" step="0.5"
+                                required
+                                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
+                                value={entryForm.weight}
+                                onChange={e => setEntryForm({...entryForm, weight: e.target.value})}
+                            />
+                          </div>
+                          <div>
+                             <label className="block text-xs font-mono text-gray-500 mb-1">Reps</label>
+                             <input 
+                                type="number"
+                                required
+                                className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
+                                value={entryForm.reps}
+                                onChange={e => setEntryForm({...entryForm, reps: e.target.value})}
+                             />
+                          </div>
+                      </div>
+                      <div>
+                          <label className="block text-xs font-mono text-gray-500 mb-1">Notes (Optional)</label>
+                          <textarea 
+                              className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none h-20 resize-none"
+                              value={entryForm.notes}
+                              onChange={e => setEntryForm({...entryForm, notes: e.target.value})}
+                          />
+                      </div>
+                      <button type="submit" className="w-full bg-biome-accent text-biome-dark font-bold py-3 rounded hover:bg-emerald-400 transition-colors">
+                          SAVE ENTRY
+                      </button>
+                  </form>
+              </div>
+          </div>
+      )}
 
       {showSettings && (
         <div className="absolute top-14 right-4 z-40 w-72 bg-biome-panel border border-gray-700 shadow-xl rounded-lg p-4">
             <h3 className="text-white font-bold mb-3 text-sm font-mono border-b border-gray-800 pb-2">DATA MANAGEMENT</h3>
             <div className="space-y-2">
+                <button onClick={() => { setShowManualEntry(true); setShowSettings(false); }} className="w-full text-left text-xs text-white bg-gray-800 hover:bg-gray-700 p-2 rounded transition-colors flex items-center gap-2 border border-gray-600">
+                    <span className="text-biome-accent text-lg font-bold">+</span> Manual Log Entry
+                </button>
+
+                <div className="h-px bg-gray-800 my-2"></div>
+
                 <button onClick={handleViewDb} className="w-full text-left text-xs text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
                     {dbView ? 'Hide Database' : 'Inspect Database'}
                 </button>
+                
                 <button onClick={triggerFileUpload} className="w-full text-left text-xs text-biome-accent hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
                     Import CSV Data
                     <span className="text-[9px] text-gray-500 ml-auto">(Ex, W, R, RPE, Date)</span>
                 </button>
-                <input 
-                    type="file" 
-                    accept=".csv" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    onChange={handleCsvImport}
-                />
+                <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleCsvImport} />
+
+                <button onClick={handleExportDb} className="w-full text-left text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 p-2 rounded transition-colors flex items-center gap-2">
+                    Backup Data (Export JSON)
+                </button>
+
+                <button onClick={triggerJsonUpload} className="w-full text-left text-xs text-orange-400 hover:text-orange-300 hover:bg-orange-900/20 p-2 rounded transition-colors flex items-center gap-2">
+                    Restore Data (Import JSON)
+                </button>
+                <input type="file" accept=".json" ref={jsonInputRef} className="hidden" onChange={handleJsonImport} />
+
+                <div className="h-px bg-gray-800 my-2"></div>
+
                 <button onClick={handleClearHistory} className="w-full text-left text-xs text-gray-300 hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
                     Clear Chat History
                 </button>

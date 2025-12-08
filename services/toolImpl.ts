@@ -30,10 +30,17 @@ const saveDatabase = (db: Record<string, WorkoutLog[]>) => {
 };
 
 /**
- * Returns the raw database object for inspection.
+ * Returns the raw database object for inspection/export.
  */
 export const getRawDatabase = (): Record<string, WorkoutLog[]> => {
   return getDatabase();
+};
+
+/**
+ * Overwrites the database with provided data (Restore).
+ */
+export const restoreDatabase = (newDb: Record<string, WorkoutLog[]>): void => {
+  saveDatabase(newDb);
 };
 
 /**
