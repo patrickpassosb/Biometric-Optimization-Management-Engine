@@ -1,6 +1,6 @@
 import { GoogleGenAI, Content, Part } from "@google/genai";
-import { MODEL_NAME, SYSTEM_INSTRUCTION, getHistoryTool, calculateMetricsTool, logWorkoutTool } from "../constants";
-import { getHistoryImpl, calculateMetricsImpl, logWorkoutImpl } from "./toolImpl";
+import { MODEL_NAME, SYSTEM_INSTRUCTION, getHistoryTool, calculateMetricsTool, logWorkoutTool, getExerciseKnowledgeTool, getOverallStatisticsTool } from "../constants";
+import { getHistoryImpl, calculateMetricsImpl, logWorkoutImpl, getExerciseKnowledgeImpl, getOverallStatisticsImpl } from "./toolImpl";
 import { Message, Sender } from "../types";
 
 const getApiKey = () => {
@@ -41,7 +41,7 @@ export class BiomeService {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.2,
         tools: [
-          { functionDeclarations: [getHistoryTool, calculateMetricsTool, logWorkoutTool] }
+          { functionDeclarations: [getHistoryTool, calculateMetricsTool, logWorkoutTool, getExerciseKnowledgeTool, getOverallStatisticsTool] }
         ],
       },
       history: history
@@ -82,6 +82,10 @@ export class BiomeService {
             resultString = calculateMetricsImpl(args.history_data);
           } else if (name === "log_workout") {
             resultString = logWorkoutImpl(args);
+          } else if (name === "get_exercise_knowledge") {
+            resultString = getExerciseKnowledgeImpl(args.exercise_name);
+          } else if (name === "get_overall_statistics") {
+            resultString = getOverallStatisticsImpl();
           } else {
             resultString = JSON.stringify({ error: "Unknown tool" });
           }

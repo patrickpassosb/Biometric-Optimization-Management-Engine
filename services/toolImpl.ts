@@ -3,6 +3,52 @@ import { WorkoutLog, ExerciseMetrics } from "../types";
 
 const DB_KEY = 'biome_db_v1';
 
+// --- Static Knowledge Base ---
+const EXERCISE_KNOWLEDGE_BASE: Record<string, any> = {
+    "Squat": {
+        primary_muscles: ["Quadriceps", "Glutes"],
+        movement_pattern: "Knee Dominant",
+        regression: "Goblet Squat",
+        progression: "Pause Squat / Front Squat",
+        alternatives: ["Leg Press", "Hack Squat", "Bulgarian Split Squat"]
+    },
+    "Bulgarian Squat": {
+        primary_muscles: ["Quadriceps", "Glutes", "Stabilizers"],
+        movement_pattern: "Unilateral Knee Dominant",
+        regression: "Split Squat (Both feet on ground)",
+        progression: "Deficit Bulgarian Split Squat",
+        alternatives: ["Lunges", "Single Leg Press", "Step Ups"]
+    },
+    "Bench Press": {
+        primary_muscles: ["Pectorals", "Triceps", "Front Delts"],
+        movement_pattern: "Horizontal Push",
+        regression: "Push Up / Dumbbell Floor Press",
+        progression: "Larsen Press / Pause Bench Press",
+        alternatives: ["Dumbbell Bench Press", "Machine Chest Press", "Weighted Dips"]
+    },
+    "Deadlift": {
+        primary_muscles: ["Hamstrings", "Glutes", "Erectors"],
+        movement_pattern: "Hinge",
+        regression: "RDL (Romanian Deadlift)",
+        progression: "Deficit Deadlift",
+        alternatives: ["Trap Bar Deadlift", "Rack Pulls", "Hip Thrusts"]
+    },
+    "Dead Hang": {
+        primary_muscles: ["Forearms", "Lats", "Shoulder Girdle"],
+        movement_pattern: "Isometric Pull",
+        regression: "Active Hang (Feet assisted)",
+        progression: "One Arm Hang / Weighted Hang",
+        alternatives: ["Farmers Walk", "Pull Up Hold"]
+    },
+    "Overhead Press": {
+        primary_muscles: ["Deltoids", "Triceps"],
+        movement_pattern: "Vertical Push",
+        regression: "Seated Dumbbell Press",
+        progression: "Z Press / Push Press",
+        alternatives: ["Landmine Press", "Arnold Press"]
+    }
+};
+
 /**
  * Helper to get the DB from LocalStorage or initialize it with MOCK_DATABASE
  */
@@ -73,6 +119,30 @@ export const getHistoryImpl = (exercise_name: string): string => {
 
   const logs = db[normalizedKey];
   return JSON.stringify(logs);
+};
+
+/**
+ * Retrieves knowledge about an exercise (regressions, progressions, etc).
+ */
+export const getExerciseKnowledgeImpl = (exercise_name: string): string => {
+    if (!exercise_name) return JSON.stringify({ error: "No exercise name provided." });
+
+    // Normalize casing for lookup
+    const target = exercise_name.toLowerCase().replace(/\s+/g, '');
+    
+    // Find matching key in the static knowledge base
+    const key = Object.keys(EXERCISE_KNOWLEDGE_BASE).find(
+        (k) => k.toLowerCase().replace(/\s+/g, '') === target
+    );
+
+    if (key) {
+        return JSON.stringify(EXERCISE_KNOWLEDGE_BASE[key]);
+    } else {
+        return JSON.stringify({ 
+            status: "not_found", 
+            message: "No specific Biome data found for this exercise. Please rely on general biomechanical principles." 
+        });
+    }
 };
 
 /**
@@ -166,4 +236,49 @@ export const calculateMetricsImpl = (history_data_json: string): string => {
   };
 
   return JSON.stringify(result);
+};
+
+/**
+ * Scans the entire database and provides a statistical summary for each exercise.
+ * Used for "Global" analysis queries.
+ */
+export const getOverallStatisticsImpl = (): string => {
+  const db = getDatabase();
+  const exercises = Object.keys(db);
+  
+  if (exercises.length === 0) {
+      return JSON.stringify({ message: "Database is empty." });
+  }
+
+  const summaries = exercises.map(name => {
+      const logs = db[name];
+      if (logs.length === 0) return null;
+
+      // Sort logs
+      const sortedLogs = [...logs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const last = sortedLogs[sortedLogs.length - 1];
+      const first = sortedLogs[0];
+
+      // E1RM Trend
+      const currentE1RM = last.weight * (1 + last.reps / 30);
+      const startE1RM = first.weight * (1 + first.reps / 30);
+      const e1rmDelta = startE1RM > 0 ? ((currentE1RM - startE1RM) / startE1RM) * 100 : 0;
+
+      // Recent RPE Average (Last 3)
+      const recentLogs = sortedLogs.slice(-3);
+      const avgRpe = recentLogs.reduce((acc, l) => acc + l.rpe, 0) / recentLogs.length;
+
+      return {
+          exercise_name: name,
+          total_sessions: logs.length,
+          last_session_date: last.date,
+          last_weight: last.weight,
+          last_rpe: last.rpe,
+          avg_recent_rpe: avgRpe.toFixed(1),
+          strength_progress_pct: e1rmDelta.toFixed(1) + "%",
+          status: e1rmDelta < 0 ? "REGRESSING" : (e1rmDelta < 2 && logs.length > 5) ? "PLATEAU" : "PROGRESSING"
+      };
+  }).filter(Boolean);
+
+  return JSON.stringify(summaries);
 };

@@ -10,9 +10,10 @@ const generateId = () => {
     return Date.now().toString(36) + Math.random().toString(36).substring(2);
 };
 
-// Simple Markdown Parser to avoid external dependencies
+// --- Sub-Components ---
+
+// 1. Simple Markdown Parser
 const SimpleMarkdown: React.FC<{ text: string }> = ({ text }) => {
-    // Split by bold markers (**text**)
     const parts = text.split(/(\*\*.*?\*\*)/g);
     return (
         <div className="whitespace-pre-wrap">
@@ -30,6 +31,75 @@ const SimpleMarkdown: React.FC<{ text: string }> = ({ text }) => {
     );
 };
 
+// 2. Collapsible System Log (Terminal Style)
+const SystemToolLog: React.FC<{ msg: Message }> = ({ msg }) => {
+    const [expanded, setExpanded] = useState(false);
+    
+    return (
+        <div className="w-full my-1 group">
+            <button 
+                onClick={() => setExpanded(!expanded)}
+                className={`w-full flex items-center gap-2 px-3 py-2 border rounded text-xs font-mono transition-all duration-200 ${
+                    expanded 
+                        ? 'bg-gray-800 border-gray-700' 
+                        : 'bg-transparent border-transparent hover:bg-gray-900/50 hover:border-gray-800'
+                }`}
+            >
+                <span className={`text-[10px] text-gray-500 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}>▶</span>
+                <span className="text-biome-dim font-bold group-hover:text-biome-accent transition-colors">
+                    {msg.toolCall?.name || "SYSTEM_OP"}
+                </span>
+                
+                {!expanded && (
+                    <>
+                        <div className="w-px h-3 bg-gray-800 mx-2"></div>
+                        <span className="truncate opacity-40 text-gray-400 max-w-[200px]">
+                            {JSON.stringify(msg.toolCall?.args)}
+                        </span>
+                    </>
+                )}
+
+                <div className="ml-auto flex items-center gap-2">
+                     <span className="text-[9px] text-gray-600 font-mono tracking-widest uppercase">
+                        {msg.id.slice(-4)}
+                     </span>
+                </div>
+            </button>
+            
+            {expanded && (
+                <div className="mt-1 p-3 bg-black/40 border-l-2 border-biome-dim/20 ml-1 text-[10px] font-mono text-gray-400 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+                     <div className="grid gap-3">
+                        <div>
+                            <span className="text-biome-accent uppercase tracking-wider text-[9px] mb-1 block opacity-70">Input Parameters</span>
+                            <pre className="text-gray-300 whitespace-pre-wrap bg-gray-900/50 p-2 rounded border border-white/5 font-mono">
+                                {JSON.stringify(msg.toolCall?.args, null, 2)}
+                            </pre>
+                        </div>
+                        <div>
+                            <span className="text-blue-400 uppercase tracking-wider text-[9px] mb-1 block opacity-70">Output Result</span>
+                            <pre className="text-gray-300 whitespace-pre-wrap bg-gray-900/50 p-2 rounded border border-white/5 max-h-60 overflow-y-auto font-mono scrollbar-thin scrollbar-thumb-gray-700">
+                                {msg.toolCall?.result}
+                            </pre>
+                        </div>
+                     </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// --- Constants ---
+
+const QUICK_ACTIONS = [
+    { label: "Analyze Squat", prompt: "Analyze my Squat progress. Am I plateauing?", icon: "📊" },
+    { label: "Volume Check", prompt: "Calculate my weekly volume trend for Bench Press.", icon: "📈" },
+    { label: "Suggest Workout", prompt: "Based on my history, what should I train today for optimal adaptation?", icon: "💪" },
+    { label: "Fix Form", prompt: "My lower back hurts during Deadlifts. What are some regressions or cues?", icon: "🔧" },
+    { label: "Log PR", prompt: "I hit a PR today: ", icon: "🏆" }, 
+];
+
+// --- Main Component ---
+
 export const ChatInterface: React.FC = () => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -39,9 +109,12 @@ export const ChatInterface: React.FC = () => {
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [dbView, setDbView] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [availableExercises, setAvailableExercises] = useState<string[]>([]);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Manual Entry State
   const [entryForm, setEntryForm] = useState({
@@ -80,32 +153,44 @@ export const ChatInterface: React.FC = () => {
     }
   }, []);
 
+  // Scroll to bottom on message update
   useEffect(() => {
     if (messages.length > 0) {
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
     }
     
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        // Use a slight timeout to ensure DOM render completion
+        setTimeout(() => {
+             if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }, 50);
     }
-  }, [messages]);
+  }, [messages, isProcessing]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isProcessing) return;
+  // Load exercises for autocomplete when manual entry opens
+  useEffect(() => {
+      if (showManualEntry) {
+          const db = getRawDatabase();
+          setAvailableExercises(Object.keys(db).sort());
+      }
+  }, [showManualEntry]);
 
-    const userText = input;
+  const handleSend = async (textOverride?: string) => {
+    const textToSend = textOverride || input;
+    if (!textToSend.trim() || isProcessing) return;
+
     setInput('');
     setIsProcessing(true);
 
     const userMsg: Message = {
       id: generateId(),
       sender: Sender.USER,
-      text: userText
+      text: textToSend
     };
     setMessages(prev => [...prev, userMsg]);
 
-    const responseMessages = await biomeService.sendMessage(userText, (toolName, args) => {
-      // Optional: Tool callback logic
+    const responseMessages = await biomeService.sendMessage(textToSend, (toolName, args) => {
+      // Optional: Live tool feedback could go here
     });
 
     setMessages(prev => [...prev, ...responseMessages]);
@@ -214,56 +299,143 @@ export const ChatInterface: React.FC = () => {
             const csvData = event.target?.result as string;
             if (!csvData) return;
 
-            const lines = csvData.split('\n');
+            const lines = csvData.split(/\r?\n/);
+            if (lines.length < 2) {
+                setImportError("CSV must have a header and at least one data row.");
+                return;
+            }
+
+            // 1. Detect Delimiter
+            const headerLine = lines[0];
+            const delimiters = [',', ';', '\t', '|'];
+            let bestDelimiter = ',';
+            let maxCount = 0;
+            
+            delimiters.forEach(d => {
+                const count = headerLine.split(d).length - 1;
+                if (count > maxCount) {
+                    maxCount = count;
+                    bestDelimiter = d;
+                }
+            });
+
+            // 2. Parser Helper
+            const parseLine = (text: string): string[] => {
+                const result: string[] = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    
+                    if (char === '"') {
+                        if (inQuotes && text[i+1] === '"') {
+                            current += '"';
+                            i++; // Skip escaped quote
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === bestDelimiter && !inQuotes) {
+                        result.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                result.push(current.trim());
+                return result;
+            };
+
+            // 3. Map Headers
+            const headers = parseLine(headerLine).map(h => h.toLowerCase().trim().replace(/['"]+/g, ''));
+            
+            const colMap = {
+                exercise: headers.findIndex(h => h.includes('exercise') || h.includes('title') || h === 'movement' || h === 'name' || h === 'activity'),
+                weight: headers.findIndex(h => h.includes('weight') || h.includes('kg') || h.includes('lbs') || h.includes('load') || h === 'val'),
+                reps: headers.findIndex(h => h.includes('reps') || h.includes('repititions') || h === 'count'),
+                rpe: headers.findIndex(h => h.includes('rpe') || h === 'rating'),
+                date: headers.findIndex(h => h.includes('date') || h.includes('time') || h === 'created' || h === 'start'),
+                notes: headers.findIndex(h => h.includes('note') || h.includes('comment'))
+            };
+
+            if (colMap.exercise === -1 && colMap.weight === -1) {
+                 if (headers.length >= 3) {
+                    colMap.exercise = 0; colMap.weight = 1; colMap.reps = 2; colMap.rpe = 3; colMap.date = 4; colMap.notes = 5;
+                 }
+            }
+
+            if (colMap.exercise === -1 || colMap.weight === -1 || colMap.reps === -1) {
+                 setImportError(`Could not identify Exercise, Weight, or Reps columns.\nHeaders found: [${headers.join(', ')}]`);
+                 return;
+            }
+
             let successCount = 0;
             let failCount = 0;
 
-            // Simple CSV parser: assume header row, assume columns: Date, Exercise, Weight, Reps, RPE, Notes
-            // Or simpler: Exercise, Weight, Reps, RPE, Date
-            
+            // 4. Process Lines
             for (let i = 1; i < lines.length; i++) {
                 const line = lines[i].trim();
                 if (!line) continue;
                 
-                const parts = line.split(',');
-                // Expect at least 4 parts
-                if (parts.length < 4) {
-                    failCount++;
-                    continue;
+                const parts = parseLine(line);
+                const getVal = (idx: number) => (idx >= 0 && idx < parts.length) ? parts[idx] : '';
+
+                const exercise_name = getVal(colMap.exercise).replace(/^"|"$/g, '');
+                let weightStr = getVal(colMap.weight);
+                let repsStr = getVal(colMap.reps);
+                let rpeStr = getVal(colMap.rpe);
+                let dateStr = getVal(colMap.date).replace(/^"|"$/g, '');
+                let notes = getVal(colMap.notes).replace(/^"|"$/g, '');
+
+                if (bestDelimiter === ';') {
+                   weightStr = weightStr.replace(',', '.');
+                   repsStr = repsStr.replace(',', '.');
+                   rpeStr = rpeStr.replace(',', '.');
                 }
 
-                const exercise_name = parts[0]?.trim();
-                const weight = parseFloat(parts[1]);
-                const reps = parseFloat(parts[2]);
-                const rpe = parseFloat(parts[3]);
-                let date = parts[4]?.trim();
-                let notes = parts[5]?.trim() || "Imported via CSV";
-
+                const weight = parseFloat(weightStr);
+                const reps = parseFloat(repsStr);
+                let rpe = parseFloat(rpeStr);
+                
                 if (!exercise_name || isNaN(weight) || isNaN(reps)) {
                     failCount++;
                     continue;
                 }
 
-                if (!date || date.length < 5) {
-                    date = new Date().toISOString().split('T')[0];
+                if (isNaN(rpe)) rpe = 8;
+
+                let date = new Date().toISOString().split('T')[0];
+                if (dateStr) {
+                    const d = new Date(dateStr);
+                    if (!isNaN(d.getTime())) {
+                        date = d.toISOString().split('T')[0];
+                    }
                 }
 
                 logWorkoutImpl({
                     exercise_name,
                     weight,
                     reps,
-                    rpe: isNaN(rpe) ? 8 : rpe,
+                    rpe,
                     date,
-                    notes
+                    notes: notes || "Imported CSV"
                 });
                 successCount++;
             }
             
-            alert(`Import Complete!\nSuccessful: ${successCount}\nFailed: ${failCount}`);
+            alert(`Import Successful!\nAdded: ${successCount} entries.\nSkipped: ${failCount} entries.`);
             setShowSettings(false);
+            setImportError(null);
+
+            setMessages(prev => [...prev, {
+                id: generateId(),
+                sender: Sender.BIOME,
+                text: `**System Data Update:** Successfully imported ${successCount} workout logs. I have updated my memory with this new data.`
+            }]);
 
         } catch (err) {
-            setImportError("Failed to parse CSV. Ensure format: Exercise, Weight, Reps, RPE, Date, Notes");
+            console.error(err);
+            setImportError("Failed to parse CSV. Ensure format matches or headers are clear.");
         }
     };
     reader.readAsText(file);
@@ -292,7 +464,11 @@ export const ChatInterface: React.FC = () => {
           notes: ''
       });
       alert("Entry Saved!");
-      // Don't close immediately so user can enter more
+  };
+
+  const applyQuickAction = (action: typeof QUICK_ACTIONS[0]) => {
+      setInput(action.prompt);
+      if (inputRef.current) inputRef.current.focus();
   };
 
   return (
@@ -313,11 +489,18 @@ export const ChatInterface: React.FC = () => {
                           <input 
                               type="text" 
                               required
+                              list="exercise-list"
+                              autoComplete="off"
                               className="w-full bg-black/50 border border-gray-700 rounded p-2 text-white focus:border-biome-accent outline-none"
                               placeholder="e.g. Bench Press"
                               value={entryForm.exercise}
                               onChange={e => setEntryForm({...entryForm, exercise: e.target.value})}
                           />
+                          <datalist id="exercise-list">
+                                {availableExercises.map((ex, i) => (
+                                    <option key={i} value={ex} />
+                                ))}
+                          </datalist>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -395,7 +578,7 @@ export const ChatInterface: React.FC = () => {
                 
                 <button onClick={triggerFileUpload} className="w-full text-left text-xs text-biome-accent hover:text-white hover:bg-gray-800 p-2 rounded transition-colors flex items-center gap-2">
                     Import CSV Data
-                    <span className="text-[9px] text-gray-500 ml-auto">(Ex, W, R, RPE, Date)</span>
+                    <span className="text-[9px] text-gray-500 ml-auto">(Smart Detect)</span>
                 </button>
                 <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleCsvImport} />
 
@@ -418,7 +601,7 @@ export const ChatInterface: React.FC = () => {
                 </button>
             </div>
             {importError && (
-                <div className="mt-2 text-[10px] text-red-400 p-2 bg-red-900/20 rounded">
+                <div className="mt-2 text-[10px] text-red-400 p-2 bg-red-900/20 rounded whitespace-pre-wrap">
                     {importError}
                 </div>
             )}
@@ -460,7 +643,7 @@ export const ChatInterface: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth" ref={scrollRef}>
         {messages.map((msg) => (
           <div 
             key={msg.id} 
@@ -471,17 +654,10 @@ export const ChatInterface: React.FC = () => {
               <div className={`text-xs font-mono mb-1 flex items-center gap-2 ${msg.sender === Sender.USER ? 'justify-end text-biome-dim' : 'text-biome-accent'}`}>
                 {msg.sender === Sender.BIOME && <span>&gt; BIOME.AI</span>}
                 {msg.sender === Sender.USER && <span>USER</span>}
-                {msg.sender === Sender.SYSTEM && <span className="text-yellow-500"># SYSTEM_TOOL</span>}
               </div>
 
               {msg.sender === Sender.SYSTEM ? (
-                 <div className="bg-gray-900/50 border border-gray-800 rounded p-3 text-xs font-mono text-gray-400">
-                    <div className="flex items-center justify-between mb-1">
-                        <span className="font-bold text-yellow-500/80">Executing: {msg.toolCall?.name}</span>
-                        <span className="text-[10px] opacity-50">{msg.id.slice(0,4)}</span>
-                    </div>
-                    <div className="opacity-70 truncate">Input: {JSON.stringify(msg.toolCall?.args)}</div>
-                 </div>
+                 <SystemToolLog msg={msg} />
               ) : (
                 <div 
                     className={`p-4 rounded-lg shadow-sm leading-relaxed text-sm ${
@@ -498,18 +674,37 @@ export const ChatInterface: React.FC = () => {
         ))}
         {isProcessing && (
             <div className="flex justify-start">
-                <div className="bg-biome-dark border border-gray-800 p-3 rounded-lg rounded-bl-none flex items-center gap-2">
-                    <div className="w-2 h-2 bg-biome-accent rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-biome-accent rounded-full animate-bounce delay-75"></div>
-                    <div className="w-2 h-2 bg-biome-accent rounded-full animate-bounce delay-150"></div>
+                <div className="bg-biome-dark border border-gray-800 p-3 rounded-lg rounded-bl-none flex items-center gap-3">
+                    <div className="flex gap-1">
+                        <div className="w-1.5 h-1.5 bg-biome-accent rounded-full animate-bounce"></div>
+                        <div className="w-1.5 h-1.5 bg-biome-accent rounded-full animate-bounce delay-75"></div>
+                        <div className="w-1.5 h-1.5 bg-biome-accent rounded-full animate-bounce delay-150"></div>
+                    </div>
+                    <span className="text-xs font-mono text-gray-500 animate-pulse">Processing Biometrics...</span>
                 </div>
             </div>
         )}
       </div>
 
       <div className="p-4 bg-biome-dark border-t border-gray-800">
+        
+        {/* Quick Actions Bar */}
+        <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
+            {QUICK_ACTIONS.map((action, idx) => (
+                <button 
+                    key={idx} 
+                    onClick={() => applyQuickAction(action)}
+                    className="flex-shrink-0 bg-gray-900 border border-gray-800 hover:border-biome-accent hover:text-white text-gray-400 text-[10px] font-mono py-1 px-3 rounded-full transition-all flex items-center gap-1.5"
+                >
+                    <span>{action.icon}</span>
+                    {action.label}
+                </button>
+            ))}
+        </div>
+
         <div className="relative">
             <textarea
+                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -517,7 +712,7 @@ export const ChatInterface: React.FC = () => {
                 className="w-full bg-biome-panel text-white placeholder-gray-600 rounded-lg pl-4 pr-12 py-3 focus:outline-none focus:ring-1 focus:ring-biome-accent resize-none h-14 font-sans text-sm"
             />
             <button 
-                onClick={handleSend}
+                onClick={() => handleSend()}
                 disabled={!input.trim() || isProcessing}
                 className="absolute right-2 top-2 bottom-2 aspect-square bg-biome-accent hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-biome-accent text-biome-dark rounded-md flex items-center justify-center transition-all"
             >
